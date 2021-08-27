@@ -1,0 +1,111 @@
+/**
+ * FreeRDP: A Remote Desktop Protocol Implementation
+ * FreeRDP Proxy Server
+ *
+ * Copyright 2019 Mati Shabtay <matishabtay@gmail.com>
+ * Copyright 2019 Kobi Mizrachi <kmizrachi18@gmail.com>
+ * Copyright 2019 Idan Freiberg <speidy@gmail.com>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <winpr/collections.h>
+
+#include <freerdp/version.h>
+#include <freerdp/freerdp.h>
+
+#include <freerdp/server/proxy/proxy_server.h>
+#include <freerdp/server/proxy/proxy_log.h>
+
+#include <stdlib.h>
+#include <signal.h>
+
+#define TAG PROXY_TAG("server")
+
+static proxyServer* server = NULL;
+
+#if defined(_WIN32)
+static const char* strsignal(int signum)
+{
+	switch (signum)
+	{
+		case SIGINT:
+			return "SIGINT";
+		case SIGTERM:
+			return "SIGTERM";
+		default:
+			return "UNKNOWN";
+	}
+}
+#endif
+
+static void cleanup_handler(int signum)
+{
+	printf("\n");
+	WLog_INFO(TAG, "[%s]: caught signal %s [%d], starting cleanup...", __FUNCTION__,
+	          strsignal(signum), signum);
+
+	WLog_INFO(TAG, "stopping all connections.");
+	pf_server_stop(server);
+}
+
+static void pf_server_register_signal_handlers(void)
+{
+	signal(SIGINT, cleanup_handler);
+	signal(SIGTERM, cleanup_handler);
+#ifndef _WIN32
+	signal(SIGQUIT, cleanup_handler);
+	signal(SIGKILL, cleanup_handler);
+#endif
+}
+
+int main(int argc, char* argv[])
+{
+	proxyConfig* config = NULL;
+	char* config_path = "config.ini";
+	int status = -1;
+
+	pf_server_register_signal_handlers();
+
+	WLog_INFO(TAG, "freerdp-proxy version info:");
+	WLog_INFO(TAG, "\tFreeRDP version: %s", FREERDP_VERSION_FULL);
+	WLog_INFO(TAG, "\tGit commit: %s", FREERDP_GIT_REVISION);
+	WLog_DBG(TAG, "\tBuild config: %s", freerdp_get_build_config());
+
+	if (argc >= 2)
+		config_path = argv[1];
+
+	config = pf_server_config_load_file(config_path);
+	if (!config)
+		goto fail;
+
+	pf_server_config_print(config);
+
+	server = pf_server_new(config);
+	if (!server)
+		goto fail;
+
+	if (!pf_server_start(server))
+		goto fail;
+
+	if (!pf_server_run(server))
+		goto fail;
+
+	status = 0;
+
+fail:
+	pf_server_free(server);
+	pf_server_config_free(config);
+
+	return status;
+}
